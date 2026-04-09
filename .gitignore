@@ -5,3 +5,4 @@ __pycache__/
 chroma_store/
 uploads/
 sessions/
+.streamlit/secrets.toml

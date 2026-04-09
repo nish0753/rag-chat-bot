@@ -6,11 +6,8 @@ langchain-chroma
 langchain-classic
 langchain-huggingface
 chromadb
-fastapi
-uvicorn
 streamlit
 python-dotenv
 pypdf
-python-multipart
-requests
 sentence-transformers
+toml

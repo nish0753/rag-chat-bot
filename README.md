@@ -1,26 +1,25 @@
-# 🤖 RAG Chatbot
+# RAG Chatbot
 
-A simple **Retrieval-Augmented Generation (RAG)** chatbot with persistent chat history.  
-Upload any PDF → Ask questions → Chat history saved automatically → Resume later.
+A **Retrieval-Augmented Generation (RAG)** chatbot with persistent chat history.
+Upload any PDF, ask questions, and resume conversations anytime.
 
 ---
 
 ## Features
 
-✅ **Upload PDFs** (up to 500 MB)  
-✅ **Ask questions** with context-aware answers  
-✅ **Conversation memory** — remembers what you discussed  
-✅ **Persistent sessions** — close and resume anytime  
-✅ **Multiple sessions** — chat with different PDFs separately  
-✅ **Local embeddings** — no API limits for embeddings  
-✅ **Fast responses** — powered by Groq (Llama 3.3 70B)
+- Upload PDFs and ask questions instantly
+- Conversation memory — remembers what you discussed
+- Persistent sessions — close and resume later
+- Multiple sessions — chat with different PDFs separately
+- Local embeddings — no API limits for vector generation
+- Fast responses — powered by Groq (Llama 3.3 70B)
 
 ---
 
-## Quick Start
+## Local Setup
 
 ### 1. Get a Groq API Key (Free)
-Go to: **https://console.groq.com/keys**  
+Go to: **https://console.groq.com/keys**
 Create a key and add it to `.env`:
 ```
 GROQ_API_KEY=gsk_your_key_here
@@ -32,21 +31,6 @@ pip install -r requirements.txt
 ```
 
 ### 3. Run the App
-**Option A — Use the startup script:**
-```bash
-cd rag-chatbot
-./start.sh
-```
-
-**Option B — Run manually (2 terminals):**
-
-Terminal 1 (FastAPI):
-```bash
-cd rag-chatbot
-python3 -m uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-Terminal 2 (Streamlit):
 ```bash
 cd rag-chatbot
 streamlit run app.py
@@ -56,28 +40,41 @@ Open: **http://localhost:8501**
 
 ---
 
+## Deploy to Streamlit Cloud (Free)
+
+### 1. Fork or use this repo
+This repo is already on GitHub at: `https://github.com/nish0753/rag-chat-bot`
+
+### 2. Go to Streamlit Cloud
+Visit: **https://share.streamlit.io**
+Sign in with GitHub and click **New app**.
+
+### 3. Configure the app
+- **Repository:** `nish0753/rag-chat-bot`
+- **Branch:** `main`
+- **Main file path:** `app.py`
+
+### 4. Add your Groq API key
+In your Streamlit Cloud app dashboard, go to **Settings > Secrets** and add:
+```toml
+GROQ_API_KEY = "your_actual_groq_api_key"
+```
+
+### 5. Deploy
+Click **Deploy**. Your app will be live in about 1-2 minutes.
+
+**Important:** Streamlit Cloud uses ephemeral storage, so uploaded PDFs, vector stores, and sessions persist only while the app is active. If the app restarts, you will need to re-upload PDFs. For persistent storage, consider deploying on Render or Railway with a mounted disk.
+
+---
+
 ## How It Works
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      UPLOAD PDF                              │
-│  PDF → Chunks → HuggingFace Embeddings → ChromaDB           │
-│                         ↓                                    │
-│              Create new session (saved to disk)              │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│                      ASK QUESTION                            │
-│  Question → Vector Search → Top 3 Chunks → Groq LLM → Answer │
-│                         ↓                                    │
-│            Save Q&A to session (persists on disk)            │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│                    RESUME LATER                              │
-│  Sessions saved in ./sessions/ folder                        │
-│  Click any session in sidebar to resume chat                 │
-└─────────────────────────────────────────────────────────────┘
+Upload PDF -> Split into chunks -> Embed -> Store in ChromaDB
+                                           |
+Ask question -> Vector search -> Top chunks -> Groq LLM -> Answer
+                                           |
+                              Save Q&A to session (JSON file)
 ```
 
 ---
@@ -86,12 +83,9 @@ Open: **http://localhost:8501**
 
 ```
 rag-chatbot/
-├── main.py          # FastAPI backend (upload, chat, sessions)
-├── rag.py           # RAG logic (embeddings, retrieval, LLM)
-├── app.py           # Streamlit frontend
-├── .env             # Groq API key
+├── app.py           # Streamlit app (frontend + RAG logic)
+├── .env             # Groq API key (local only)
 ├── requirements.txt # Dependencies
-├── start.sh         # Startup script
 ├── uploads/         # Uploaded PDFs
 ├── sessions/        # Saved chat sessions (JSON files)
 └── chroma_store/    # Vector embeddings (ChromaDB)
@@ -99,55 +93,30 @@ rag-chatbot/
 
 ---
 
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/upload` | Upload PDF, create new session |
-| `POST` | `/chat` | Ask question (saves to session) |
-| `GET` | `/sessions` | List all saved sessions |
-| `GET` | `/sessions/{id}` | Load specific session |
-| `DELETE` | `/sessions/{id}` | Delete a session |
-
----
-
 ## Tech Stack
 
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Frontend | Streamlit | Web UI |
-| Backend | FastAPI | REST API |
-| LLM | Groq (Llama 3.3 70B) | Answer generation |
-| Embeddings | HuggingFace (local) | Text → vectors |
-| Vector Store | ChromaDB | Similarity search |
-| Orchestration | LangChain | RAG pipeline |
-| Storage | JSON files | Session persistence |
-
----
-
-## Limits
-
-| Metric | Limit |
-|--------|-------|
-| PDF size | 500 MB |
-| Groq free tier | ~14,000 requests/day |
-| Context window | 8,192 tokens |
+| Component | Technology |
+|-----------|------------|
+| Frontend | Streamlit |
+| LLM | Groq (Llama 3.3 70B) |
+| Embeddings | HuggingFace (sentence-transformers) |
+| Vector Store | ChromaDB |
+| Orchestration | LangChain |
+| Storage | JSON files (sessions) |
 
 ---
 
 ## Troubleshooting
 
-**"No document uploaded yet"**
-→ Upload a PDF first, or select a saved session from the sidebar.
-
-**"Connection refused"**
-→ FastAPI isn't running. Start it with: `python3 -m uvicorn main:app --reload`
-
-**Slow responses**
-→ First question loads the embedding model (takes ~10s). Subsequent questions are fast.
+**"Error processing PDF"**
+- Make sure your `.env` file has a valid `GROQ_API_KEY`
+- First question loads the embedding model (~10s). Subsequent questions are faster.
 
 **Rate limit errors**
-→ You hit Groq's free tier limit. Wait 60 seconds or get a new API key.
+- You hit Groq's free tier limit. Wait 60 seconds or upgrade your plan.
+
+**App runs out of memory on Streamlit Cloud**
+- Large PDFs or many sessions can exceed the free tier memory limit. Try smaller PDFs or deploy on a platform with more resources.
 
 ---
 
