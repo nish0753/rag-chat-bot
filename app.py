@@ -528,25 +528,23 @@ else:
             for i, q in enumerate(st.session_state.quiz_questions):
                 st.markdown(f"### Question {i+1}: {q['question']}")
 
-                # Determine the state for this question
                 selected = st.session_state.quiz_answers.get(i, None)
                 is_answered = selected is not None
 
-                # Radio buttons for options
-                labels = ["A", "B", "C", "D"]
-                chosen = st.radio(
-                    f"Select your answer for Q{i+1}",
-                    options=q["options"],
-                    index=None if not is_answered else selected,
-                    format_func=lambda x: x,
-                    disabled=is_answered,
-                    key=f"q_{i}",
-                    label_visibility="collapsed"
-                )
-
-                if chosen is not None and not is_answered:
-                    st.session_state.quiz_answers[i] = chosen
-                    st.rerun()
+                # Option buttons
+                option_labels = ["A", "B", "C", "D"]
+                cols = st.columns(4)
+                for j, (col, opt) in enumerate(zip(cols, q["options"])):
+                    btn_label = f"{option_labels[j]}. {opt}"
+                    clicked = col.button(
+                        btn_label,
+                        key=f"q_{i}_opt_{j}",
+                        disabled=is_answered,
+                        use_container_width=True
+                    )
+                    if clicked and not is_answered:
+                        st.session_state.quiz_answers[i] = j
+                        st.rerun()
 
                 # Show correct/incorrect after answering
                 if is_answered:
@@ -554,11 +552,10 @@ else:
                     if is_correct:
                         st.success("Correct!")
                     else:
-                        st.error(f"Incorrect. The correct answer was: {q['options'][q['correct_index']]}")
+                        st.error(f"Incorrect. The correct answer was: {option_labels[q['correct_index']]}. {q['options'][q['correct_index']]}")
 
                     # Show explanation button
-                    exp_key = f"exp_{i}"
-                    if st.button("Explain this answer", key=exp_key):
+                    if st.button("Explain this answer", key=f"exp_{i}"):
                         st.session_state.quiz_show_explanation[i] = not st.session_state.quiz_show_explanation.get(i, False)
                         st.rerun()
 
@@ -571,7 +568,6 @@ else:
                                 )
                                 st.markdown(f"**Explanation:** {explanation}")
                             except Exception as e:
-                                # Fallback to built-in explanation
                                 st.markdown(f"**Explanation:** {q.get('explanation', 'No explanation available.')}")
 
                 st.divider()
