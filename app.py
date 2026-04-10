@@ -13,15 +13,12 @@ from langchain_chroma import Chroma
 from langchain_classic.chains import ConversationalRetrievalChain
 
 # ── Configuration ──────────────────────────────────────────────
-# Support both .env and Streamlit Secrets
-if os.getenv("GROQ_API_KEY"):
-    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-elif os.path.exists(".streamlit/secrets.toml"):
-    import toml
-    with open(".streamlit/secrets.toml") as f:
-        GROQ_API_KEY = toml.load(f).get("GROQ_API_KEY", "")
-else:
-    GROQ_API_KEY = ""
+# Support both .env (local) and Streamlit Secrets (cloud)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
+
+if not GROQ_API_KEY:
+    st.error("GROQ_API_KEY not found. Set it in .env (local) or Streamlit Secrets (cloud).")
+    st.stop()
 
 CHROMA_DIR = "./chroma_store"
 UPLOAD_DIR = "./uploads"

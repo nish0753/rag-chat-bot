@@ -10,4 +10,3 @@ streamlit
 python-dotenv
 pypdf
 sentence-transformers
-toml
