@@ -60,6 +60,72 @@ def ask_question(question: str, chat_history: List[Tuple[str, str]] = None) -> s
     return result["answer"]
 
 
+def generate_quiz(num_questions: int = 15) -> list:
+    """Generate a multiple-choice quiz from the PDF content."""
+    vector_store = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+
+    # Retrieve diverse chunks from the entire document
+    all_docs = vector_store.get()
+    # Sample chunks for breadth
+    import random
+    indices = random.sample(range(len(all_docs["ids"])), min(num_questions + 5, len(all_docs["ids"])))
+    sampled_texts = [all_docs["documents"][i] for i in indices]
+
+    # Build context from sampled chunks
+    context = "\n\n---\n\n".join(sampled_texts[:num_questions])
+
+    prompt = f"""Based on the following document context, generate exactly {num_questions} multiple-choice quiz questions. Each question must have 4 options (A, B, C, D) with exactly one correct answer.
+
+Return ONLY valid JSON in this exact format, no markdown, no extra text:
+[{{"question":"Question text","options":["Option A","Option B","Option C","Option D"],"correct_index":0,"explanation":"Detailed explanation of why the correct answer is correct and why others are wrong, with reference to the document content."}}]
+
+Rules:
+- Questions should cover different topics from the context
+- Options should be plausible but only one is correct
+- correct_index is 0-based (0=A, 1=B, 2=C, 3=D)
+- Explanation should be thorough and educational
+- Do not include any text before or after the JSON array
+
+Context:
+{context}"""
+
+    response = llm.invoke(prompt)
+    content = response.content.strip()
+
+    # Strip markdown code blocks if present
+    if content.startswith("```"):
+        content = content.split("\n", 1)[-1]
+        content = content.rsplit("\n", 1)[0]
+        content = content.strip("`").strip()
+
+    import json as _json
+    questions = _json.loads(content)
+    return questions
+
+
+def get_question_explanation(question_text: str, correct_answer: str) -> str:
+    """Get a detailed explanation for a specific quiz question."""
+    vector_store = Chroma(persist_directory=CHROMA_DIR, embedding_function=embeddings)
+    docs = vector_store.similarity_search(question_text, k=5)
+    context = "\n\n".join([d.page_content for d in docs])
+
+    prompt = f"""Based on the following document context, provide a thorough explanation of this quiz question.
+
+Question: {question_text}
+Correct Answer: {correct_answer}
+
+Document Context:
+{context}
+
+Provide a detailed, educational explanation that covers:
+1. Why this answer is correct (with specific references to the context)
+2. Key concepts and background information
+3. Any related important details a student should know"""
+
+    response = llm.invoke(prompt)
+    return response.content
+
+
 # ── Session Management ─────────────────────────────────────────
 def get_session_path(session_id: str) -> str:
     return os.path.join(SESSIONS_DIR, f"{session_id}.json")
@@ -224,6 +290,18 @@ if "show_rename" not in st.session_state:
     st.session_state.show_rename = None
 if "editing_name" not in st.session_state:
     st.session_state.editing_name = False
+if "quiz_mode" not in st.session_state:
+    st.session_state.quiz_mode = False
+if "quiz_questions" not in st.session_state:
+    st.session_state.quiz_questions = []
+if "quiz_answers" not in st.session_state:
+    st.session_state.quiz_answers = {}
+if "quiz_submitted" not in st.session_state:
+    st.session_state.quiz_submitted = False
+if "quiz_show_explanation" not in st.session_state:
+    st.session_state.quiz_show_explanation = {}
+if "num_quiz_questions" not in st.session_state:
+    st.session_state.num_quiz_questions = 15
 
 
 # ── Sidebar: Sessions ─────────────────────────────────────────
@@ -360,8 +438,8 @@ if not st.session_state.current_session_id:
         """, unsafe_allow_html=True)
 
 else:
-    # -- Chat Screen --
-    col1, col2, col3 = st.columns([6, 1, 1])
+    # -- Chat Screen or Quiz --
+    col1, col2, col3 = st.columns([5, 1, 1])
 
     with col1:
         if st.session_state.editing_name:
@@ -381,8 +459,16 @@ else:
             """, unsafe_allow_html=True)
 
     with col2:
-        if st.button("Rename", key="header_rename"):
-            st.session_state.editing_name = True
+        mode_label = "Chat" if st.session_state.quiz_mode else "Quiz"
+        mode_icon = "💬" if st.session_state.quiz_mode else "📝"
+        if st.button(f"{mode_icon} {mode_label}", key="toggle_mode"):
+            st.session_state.quiz_mode = not st.session_state.quiz_mode
+            if not st.session_state.quiz_mode:
+                # Reset quiz state when switching back to chat
+                st.session_state.quiz_questions = []
+                st.session_state.quiz_answers = {}
+                st.session_state.quiz_submitted = False
+                st.session_state.quiz_show_explanation = {}
             st.rerun()
 
     with col3:
@@ -392,55 +478,194 @@ else:
             st.session_state.current_pdf = None
             st.session_state.messages = []
             st.session_state.editing_name = False
+            st.session_state.quiz_mode = False
+            st.session_state.quiz_questions = []
+            st.session_state.quiz_answers = {}
+            st.session_state.quiz_submitted = False
+            st.session_state.quiz_show_explanation = {}
             st.rerun()
 
     st.divider()
 
-    # Chat messages
-    chat_container = st.container()
-
-    with chat_container:
-        if not st.session_state.messages:
+    # ── Quiz Mode ──────────────────────────────────────────────
+    if st.session_state.quiz_mode:
+        if not st.session_state.quiz_questions and not st.session_state.quiz_submitted:
+            # Quiz setup screen
             st.markdown("""
-                <div style='text-align: center; padding: 4rem 1rem; opacity: 0.4;'>
-                    <p style='font-size: 1.3rem; margin-bottom: 0.5rem;'>Start the conversation</p>
-                    <p style='font-size: 0.9rem;'>Ask anything about your PDF</p>
+                <div style='text-align: center; padding: 2rem 1rem;'>
+                    <h1>Generate a Quiz</h1>
+                    <p style='opacity: 0.7;'>Questions will be generated from your PDF content</p>
                 </div>
             """, unsafe_allow_html=True)
 
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                num_q = st.selectbox(
+                    "Number of questions",
+                    options=[10, 15, 20],
+                    index=1,
+                    help="More questions covers more topics but takes longer to generate"
+                )
 
-    # Chat input
-    question = st.chat_input("Ask a question about your PDF...")
+                if st.button("Generate Quiz", type="primary", use_container_width=True):
+                    with st.spinner("Generating questions from your PDF..."):
+                        try:
+                            questions = generate_quiz(num_q)
+                            st.session_state.quiz_questions = questions
+                            st.session_state.quiz_answers = {}
+                            st.session_state.quiz_submitted = False
+                            st.session_state.quiz_show_explanation = {}
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to generate quiz: {e}")
 
-    if question:
-        st.session_state.messages.append({"role": "user", "content": question})
+        elif st.session_state.quiz_questions:
+            # Display quiz
+            progress = len(st.session_state.quiz_answers)
+            total = len(st.session_state.quiz_questions)
+            st.progress(progress / total, text=f"Answered: {progress}/{total}")
+
+            for i, q in enumerate(st.session_state.quiz_questions):
+                st.markdown(f"### Question {i+1}: {q['question']}")
+
+                # Determine the state for this question
+                selected = st.session_state.quiz_answers.get(i, None)
+                is_answered = selected is not None
+
+                # Radio buttons for options
+                labels = ["A", "B", "C", "D"]
+                chosen = st.radio(
+                    f"Select your answer for Q{i+1}",
+                    options=q["options"],
+                    index=None if not is_answered else selected,
+                    format_func=lambda x: x,
+                    disabled=is_answered,
+                    key=f"q_{i}",
+                    label_visibility="collapsed"
+                )
+
+                if chosen is not None and not is_answered:
+                    st.session_state.quiz_answers[i] = chosen
+                    st.rerun()
+
+                # Show correct/incorrect after answering
+                if is_answered:
+                    is_correct = selected == q["correct_index"]
+                    if is_correct:
+                        st.success("Correct!")
+                    else:
+                        st.error(f"Incorrect. The correct answer was: {q['options'][q['correct_index']]}")
+
+                    # Show explanation button
+                    exp_key = f"exp_{i}"
+                    if st.button("Explain this answer", key=exp_key):
+                        st.session_state.quiz_show_explanation[i] = not st.session_state.quiz_show_explanation.get(i, False)
+                        st.rerun()
+
+                    if st.session_state.quiz_show_explanation.get(i, False):
+                        with st.spinner("Generating detailed explanation..."):
+                            try:
+                                explanation = get_question_explanation(
+                                    q["question"],
+                                    q["options"][q["correct_index"]]
+                                )
+                                st.markdown(f"**Explanation:** {explanation}")
+                            except Exception as e:
+                                # Fallback to built-in explanation
+                                st.markdown(f"**Explanation:** {q.get('explanation', 'No explanation available.')}")
+
+                st.divider()
+
+            # Submit button if all answered
+            if progress == total and not st.session_state.quiz_submitted:
+                if st.button("Submit Quiz and View Summary", type="primary", use_container_width=True):
+                    st.session_state.quiz_submitted = True
+                    st.rerun()
+
+            # Summary
+            if st.session_state.quiz_submitted:
+                correct_count = sum(
+                    1 for i, q in enumerate(st.session_state.quiz_questions)
+                    if st.session_state.quiz_answers.get(i) == q["correct_index"]
+                )
+                score = (correct_count / total) * 100
+
+                st.markdown("## Quiz Summary")
+
+                # Score display
+                if score >= 80:
+                    st.success(f"Score: {correct_count}/{total} ({score:.0f}%) - Great job!")
+                elif score >= 60:
+                    st.warning(f"Score: {correct_count}/{total} ({score:.0f}%) - Good effort!")
+                else:
+                    st.error(f"Score: {correct_count}/{total} ({score:.0f}%) - Keep studying!")
+
+                # Detailed breakdown
+                st.markdown("### Question Breakdown")
+                for i, q in enumerate(st.session_state.quiz_questions):
+                    is_correct = st.session_state.quiz_answers.get(i) == q["correct_index"]
+                    status = "✓" if is_correct else "✗"
+                    with st.expander(f"{status} Q{i+1}: {q['question'][:80]}..."):
+                        st.markdown(f"**Your answer:** {q['options'][st.session_state.quiz_answers[i]] if i in st.session_state.quiz_answers else 'Not answered'}")
+                        st.markdown(f"**Correct answer:** {q['options'][q['correct_index']]}")
+                        if "explanation" in q:
+                            st.markdown(f"**Why:** {q['explanation']}")
+
+                # Retake button
+                if st.button("Generate New Quiz", type="primary", use_container_width=True):
+                    st.session_state.quiz_questions = []
+                    st.session_state.quiz_answers = {}
+                    st.session_state.quiz_submitted = False
+                    st.session_state.quiz_show_explanation = {}
+                    st.rerun()
+
+    # ── Chat Mode ──────────────────────────────────────────────
+    else:
+        # Chat messages
+        chat_container = st.container()
 
         with chat_container:
-            with st.chat_message("user"):
-                st.write(question)
+            if not st.session_state.messages:
+                st.markdown("""
+                    <div style='text-align: center; padding: 4rem 1rem; opacity: 0.4;'>
+                        <p style='font-size: 1.3rem; margin-bottom: 0.5rem;'>Start the conversation</p>
+                        <p style='font-size: 0.9rem;'>Ask anything about your PDF</p>
+                    </div>
+                """, unsafe_allow_html=True)
 
-            # Build chat history
-            chat_history = []
-            msgs = st.session_state.messages[:-1]
-            for i in range(0, len(msgs) - 1, 2):
-                if i + 1 < len(msgs) and msgs[i]["role"] == "user" and msgs[i + 1]["role"] == "assistant":
-                    chat_history.append((msgs[i]["content"], msgs[i + 1]["content"]))
+            for msg in st.session_state.messages:
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
 
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    try:
-                        answer = ask_question(question, chat_history)
-                        st.write(answer)
-                        st.session_state.messages.append({"role": "assistant", "content": answer})
-                        # Save to disk after each response
-                        save_session(
-                            st.session_state.current_session_id,
-                            st.session_state.current_pdf,
-                            st.session_state.messages
-                        )
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-                        st.session_state.messages.pop()
+        # Chat input
+        question = st.chat_input("Ask a question about your PDF...")
+
+        if question:
+            st.session_state.messages.append({"role": "user", "content": question})
+
+            with chat_container:
+                with st.chat_message("user"):
+                    st.write(question)
+
+                # Build chat history
+                chat_history = []
+                msgs = st.session_state.messages[:-1]
+                for i in range(0, len(msgs) - 1, 2):
+                    if i + 1 < len(msgs) and msgs[i]["role"] == "user" and msgs[i + 1]["role"] == "assistant":
+                        chat_history.append((msgs[i]["content"], msgs[i + 1]["content"]))
+
+                with st.chat_message("assistant"):
+                    with st.spinner("Thinking..."):
+                        try:
+                            answer = ask_question(question, chat_history)
+                            st.write(answer)
+                            st.session_state.messages.append({"role": "assistant", "content": answer})
+                            # Save to disk after each response
+                            save_session(
+                                st.session_state.current_session_id,
+                                st.session_state.current_pdf,
+                                st.session_state.messages
+                            )
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+                            st.session_state.messages.pop()
