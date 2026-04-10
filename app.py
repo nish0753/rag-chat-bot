@@ -435,6 +435,12 @@ else:
                         answer = ask_question(question, chat_history)
                         st.write(answer)
                         st.session_state.messages.append({"role": "assistant", "content": answer})
+                        # Save to disk after each response
+                        save_session(
+                            st.session_state.current_session_id,
+                            st.session_state.current_pdf,
+                            st.session_state.messages
+                        )
                     except Exception as e:
                         st.error(f"Error: {e}")
                         st.session_state.messages.pop()
